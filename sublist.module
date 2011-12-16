@@ -1,0 +1,92 @@
+<?php
+function sublist_menu() {
+  $items = array();
+
+  $items['users/subscription'] = array(
+    'title' => 'Subscription Plans', 
+    'page callback' => 'sublist_display',
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+  );
+
+  return $items;
+}
+
+function sublist_display() {
+  $forms = drupal_get_form('sublist_display_forms');
+  
+  $forms .= drupal_get_form('sublist_cancel');
+
+  return $forms;
+
+}
+
+function sublist_display_forms() {
+
+  $subs = array();
+  $result = db_query("SELECT n.nid, n.title, rp.fee_amount FROM node n LEFT JOIN uc_recurring_subscription rs ON rs.nid=n.nid LEFT JOIN uc_product_features pf ON pf.nid=n.nid LEFT JOIN uc_recurring_product rp ON rp.pfid=pf.pfid WHERE n.type = 'uc_recurring_subscription' AND n.title NOT LIKE '% Off' ORDER BY rs.weight");
+  
+  while ($record = db_fetch_object($result)) {
+    $subs[$record->nid] = $record->title . ' -- ' . uc_currency_format($record->fee_amount) . '/month';
+  }
+
+  $form['sublist'] = array(
+    '#type' => 'select',
+    '#title' => t('Subscription Plans'),
+    '#options' => $subs,
+  );
+
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => 'Update subscription',
+  );
+
+  return $form;
+}
+
+function sublist_display_forms_submit(&$node) {
+  uc_cart_empty(uc_cart_get_id());
+  uc_cart_add_item($node['sublist']['#value']);
+  drupal_goto('cart/checkout');
+}
+
+function sublist_cancel() {
+  $form = array();
+
+  global $user;
+  $query = sprintf('SELECT rfid, fee_handler FROM uc_recurring_users WHERE uid = %d AND status = 0', $user->uid);
+  $result = db_query($query);
+  $result = db_fetch_array($result);
+
+  if ($result) {
+    $form['store'] = array(
+      '#type' => 'value',
+      '#value' => $result,
+    );
+    $form['submit'] = array(
+      '#type' => 'submit',
+      '#value' => 'Cancel subscription',
+    );
+  }
+
+  return $form;
+}
+
+function sublist_cancel_submit($form, &$form_state) {
+  global $user;
+  drupal_goto('user/' . $user->uid . '/recurring/' . $form_state['values']['store']['rfid'] . '/cancel/' . $form_state['values']['store']['fee_handler']);
+}
+
+// Cancel all other subscriptions
+function sublist_order($op, &$arg1, $arg2) {
+  switch ($op) {
+    case 'save':
+      global $user;
+      $query = sprintf('SELECT rfid FROM uc_recurring_users WHERE uid = %d AND status = 0', $user->uid);
+      $result = db_query($query);
+      while ($row = db_fetch_array($result)) {
+        uc_recurring_fee_cancel($row['rfid']);
+      }
+      break;
+  }
+}
